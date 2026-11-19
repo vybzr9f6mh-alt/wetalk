@@ -1,0 +1,14 @@
+name: iOS 运行器探测
+on:
+  workflow_dispatch:
+jobs:
+  macos13:
+    name: macos-13
+    runs-on: macos-13
+    steps:
+      - run: echo "macos-13 OK" && sw_vers
+  macos15:
+    name: macos-15
+    runs-on: macos-15
+    steps:
+      - run: echo "macos-15 OK" && sw_vers
