@@ -1,10 +1,26 @@
-# WeTalk · 自建即时通讯
+# WeTalk · 仿微信即时通讯
 
-一个类微信的即时通讯应用：账号注册登录、好友申请、通讯录、单聊、群聊、图片消息、实时推送、未读与已读。
+一个类微信的即时通讯应用：账号注册登录、好友申请、通讯录、单聊、群聊、图片消息、实时推送、未读与已读；另带**朋友圈**与**离线演示模式**。
 
 - 后端：Node.js（无框架、零编译）+ SQLite（`node:sqlite`）+ WebSocket（`ws`）
 - 前端：原生 JS 单页应用，微信风格移动端界面，PWA 可「添加到主屏幕」
 - 出包：Capacitor 套壳 + GitHub Actions 云端构建，产出 `.apk` 与 `.ipa`
+
+---
+
+## 0. 先在线体验（手机直接打开）
+
+**https://vybzr9f6mh-alt.github.io/wetalk/**
+
+打开后点「不登录，先看看演示模式」，无需服务器即可体验：
+
+- 微信 / 通讯录 / 发现 / 我 四个 Tab
+- 聊天：历史消息、气泡、时间分隔、发消息、对方自动回复、未读角标
+- 通讯录：好友列表、新的朋友、群聊
+- 发现：朋友圈（发布、点赞、评论）、视频号 / 扫一扫 / 小程序等入口
+- 我：资料、微信号、设置
+
+想真正联网聊天，再部署下面的 Node 后端并注册账号。
 
 ---
 
@@ -86,6 +102,11 @@ HOST=0.0.0.0 PORT=8080 node server/index.js
 
 ## 5. 出 Android APK
 
+> **CI 修复说明**：仓库里现有的 workflow 在新版 GitHub runner 上会卡在
+> `android-actions/setup-android`（它仍在找已被移除的 `tools` 包）。
+> 修复版已放在 `ci/build.yml`，覆盖到 `.github/workflows/build.yml` 即可。
+> 通过 API 修改 workflow 文件需要 token 带 `workflow` 权限。
+
 ### 云端（不用装任何环境）
 
 1. 把 `wetalk/` 目录作为仓库根推到 GitHub（`.github/workflows/build.yml` 已就位）
@@ -157,8 +178,10 @@ Codemagic / EAS Build / Xcode Cloud 都能在云端 Mac 上编译并签名，只
 - [x] 历史消息分页拉取（游标 `before`）
 - [x] 微信风格 UI：底部四 Tab、气泡、头像、时间分隔
 - [x] PWA：可安装、离线打开外壳
+- [x] 离线演示模式：无后端也能完整操作，数据存 localStorage，对方自动回复
+- [x] 朋友圈：动态流、发布、点赞、评论
 - [x] 越权防护：非会话成员读写均返回 403
-- [ ] 朋友圈 / 视频通话 / 语音条 / 消息撤回（未做，属后续扩展）
+- [ ] 视频通话 / 语音条 / 消息撤回（未做，属后续扩展）
 
 ## 项目结构
 
