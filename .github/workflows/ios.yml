@@ -1,0 +1,94 @@
+name: 构建 iOS IPA
+
+# iOS 单独一个工作流：GitHub 的 macos-14 标签不可用，这里用 macos-15。
+# 产物发布到 Release（未签名，需自签后安装）。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  ios:
+    name: iOS IPA（未签名）
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: 环境诊断
+        run: |
+          node -v
+          xcodebuild -version
+          pod --version 2>/dev/null || echo "CocoaPods 未安装"
+
+      - name: 安装 CocoaPods
+        run: |
+          if ! command -v pod >/dev/null 2>&1; then
+            sudo gem install cocoapods --no-document
+          fi
+          pod --version
+
+      - name: 安装依赖
+        run: npm install --no-audit --no-fund
+
+      - name: 生成图标
+        run: python3 tools/gen_icons.py public
+
+      - name: 创建 iOS 工程
+        run: npx cap add ios
+
+      - name: 注入后端地址
+        env:
+          WETALK_SERVER_URL: ${{ inputs.server_url }}
+        run: node tools/set-server.mjs
+
+      - name: 同步 Web 资源
+        run: npx cap sync ios
+
+      - name: 编译（不签名）
+        run: |
+          cd ios/App
+          xcodebuild \
+            -workspace App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: 打包为 ipa
+        run: |
+          APP_PATH=$(find ios/App/build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -1)
+          echo "找到 App：$APP_PATH"
+          test -n "$APP_PATH"
+          rm -rf Payload "WeTalk-unsigned.ipa"
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          zip -qry "WeTalk-unsigned.ipa" Payload
+          ls -lh WeTalk-unsigned.ipa
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: wetalk-ipa-unsigned
+          path: WeTalk-unsigned.ipa
+          if-no-files-found: error
+
+      - name: 发布到 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ios-build
+          name: WeTalk iOS（未签名）
+          body: |
+            未签名 IPA。iOS 只安装 Apple 签名的应用，需用自己的 Apple ID 重签：
+            Sideloadly / AltStore / Xcode（免费账号 7 天有效）。
+          files: WeTalk-unsigned.ipa
+          fail_on_unmatched_files: true
