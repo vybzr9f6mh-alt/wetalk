@@ -224,7 +224,7 @@ body {
 .btn:disabled { opacity: 0.5; }
 
 /* ---------------------------------------------------------------- 登录 */
-.auth { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 0 32px; }
+.auth { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 40px 32px calc(40px + var(--safe-b)); overflow-y: auto; }
 .auth .brand { text-align: center; margin-bottom: 36px; }
 .auth .logo {
   width: 64px; height: 64px; margin: 0 auto 14px;
@@ -394,3 +394,128 @@ body {
   color: #fff; font-size: 13px;
 }
 .check.on { background: var(--green); border-color: var(--green); }
+
+/* ---------------------------------------------------------------- 演示入口 */
+.demo-entry {
+  display: block;
+  width: 100%;
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px dashed rgba(7, 193, 96, 0.45);
+  border-radius: 10px;
+  background: rgba(7, 193, 96, 0.06);
+  color: var(--green);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.demo-entry:active { background: rgba(7, 193, 96, 0.12); }
+
+/* ---------------------------------------------------------------- 发现 */
+.disc-list { margin-top: 10px; }
+.disc-icon {
+  flex: none;
+  width: 24px; height: 24px;
+  border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff;
+  font-size: 13px;
+  line-height: 1;
+}
+
+/* ---------------------------------------------------------------- 我 */
+.me-list { margin-top: 10px; }
+.qr { font-size: 20px; color: #b9b9be; padding-right: 4px; }
+.avatar.lg { width: 64px; height: 64px; font-size: 26px; border-radius: 8px; }
+
+/* ---------------------------------------------------------------- 朋友圈 */
+.moments-page { background: #fff; }
+.moments-cover {
+  position: relative;
+  height: 250px;
+  background: linear-gradient(150deg, #27394a 0%, #3f5b72 55%, #5a7c8d 100%);
+}
+.cover-person {
+  position: absolute;
+  right: 16px; bottom: -26px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.cover-person .avatar {
+  border: 3px solid #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+.cover-name {
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.55);
+}
+.moments-list { padding-top: 40px; }
+.moment {
+  display: flex;
+  gap: 10px;
+  padding: 16px;
+  background: #fff;
+  border-bottom: 0.5px solid var(--line);
+}
+.moment .avatar { width: 40px; height: 40px; font-size: 15px; border-radius: 5px; }
+.moment-body { flex: 1; min-width: 0; }
+.moment-name { color: #576b95; font-size: 15px; font-weight: 600; }
+.moment-text {
+  margin-top: 5px;
+  font-size: 15px;
+  line-height: 1.52;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.moment-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  margin-top: 8px;
+  max-width: 234px;
+}
+.moment-grid.g1 { grid-template-columns: 1fr; max-width: 168px; }
+.moment-grid.g2 { grid-template-columns: repeat(2, 1fr); max-width: 156px; }
+.mimg {
+  aspect-ratio: 1 / 1;
+  border-radius: 3px;
+  background: linear-gradient(
+    135deg,
+    hsl(var(--h) 58% 64%),
+    hsl(calc(var(--h) + 38) 62% 46%)
+  );
+}
+.moment-grid.g1 .mimg { aspect-ratio: 4 / 3; }
+.moment-meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 9px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.moment-time { flex: 1; }
+.moment-act {
+  border: 0;
+  background: none;
+  color: #576b95;
+  font: inherit;
+  font-size: 13px;
+  padding: 2px 0;
+  cursor: pointer;
+}
+.moment-act.on { color: var(--muted); }
+.moment-social {
+  margin-top: 8px;
+  padding: 6px 9px;
+  background: #f7f7f7;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1.65;
+  word-break: break-word;
+}
+.moment-social .likes { color: #576b95; }
+.moment-social .comment b { color: #576b95; font-weight: 400; }

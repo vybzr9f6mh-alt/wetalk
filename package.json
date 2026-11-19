@@ -11,7 +11,8 @@
     "icons": "python3 tools/gen_icons.py public",
     "set-server": "node tools/set-server.mjs",
     "cap:android": "cap add android && cap sync android",
-    "cap:ios": "cap add ios && cap sync ios"
+    "cap:ios": "cap add ios && cap sync ios",
+    "test:ui": "node tools/test-ui.mjs"
   },
   "engines": {
     "node": ">=22"
@@ -23,6 +24,8 @@
     "@capacitor/android": "^7.0.0",
     "@capacitor/cli": "^7.0.0",
     "@capacitor/core": "^7.0.0",
-    "@capacitor/ios": "^7.0.0"
+    "@capacitor/ios": "^7.0.0",
+    "happy-dom": "^21.0.4",
+    "jsdom": "^31.0.1"
   }
 }

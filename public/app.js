@@ -5,6 +5,7 @@ const toastEl = document.getElementById('toast');
 
 const state = {
   token: localStorage.getItem('wt_token') || '',
+  demo: localStorage.getItem('wt_demo') === '1',
   me: null,
   conversations: [],
   contacts: { friends: [], requests: [] },
@@ -31,6 +32,15 @@ function initials(name) {
 
 function avatarFor(name, hue, cls = '') {
   return `<div class="avatar ${cls}" style="background:hsl(${hue ?? 200} 58% 56%)">${esc(initials(name))}</div>`;
+}
+
+/* 供 appendChild 使用的真实节点版本（messageNode 用） */
+function avatarNode(name, hue, cls = '') {
+  const d = document.createElement('div');
+  d.className = 'avatar' + (cls ? ' ' + cls : '');
+  d.style.background = `hsl(${hue ?? 200} 58% 56%)`;
+  d.textContent = initials(name);
+  return d;
 }
 
 function pad(n) { return String(n).padStart(2, '0'); }
@@ -84,6 +94,7 @@ function absUrl(u) {
 }
 
 async function api(path, { method = 'GET', body, auth = true } = {}) {
+  if (state.demo) return demoApi(path, { method, body });
   const headers = {};
   if (body) headers['content-type'] = 'application/json';
   if (auth && state.token) headers.authorization = `Bearer ${state.token}`;
@@ -101,11 +112,211 @@ async function api(path, { method = 'GET', body, auth = true } = {}) {
   return data;
 }
 
+/* ============================================================ 演示模式
+   没有后端也能完整体验：数据存在 localStorage，对方会自动回复。 */
+
+function demoConvView(d, c) {
+  const list = d.messages[c.id] || [];
+  const last = list.length ? list[list.length - 1] : null;
+  return {
+    ...c,
+    members: c.members || [d.me.id],
+    lastMessage: last,
+    lastMessageAt: last ? last.createdAt : (c.lastMessageAt || Date.now()),
+    unread: c.unread || 0,
+  };
+}
+
+function demoDefault() {
+  const seed = window.DemoSeed;
+  const clone = (o) => JSON.parse(JSON.stringify(o));
+  return {
+    me: clone(seed.users[0]),
+    friends: seed.users.slice(1).map(clone),
+    requests: [],
+    conversations: clone(seed.conversations),
+    messages: clone(seed.messages),
+    moments: clone(seed.moments),
+    nextMessageId: 5000,
+    nextConvId: 900,
+  };
+}
+
+function demoData() {
+  let d = window.DemoStore.load();
+  if (!d || !d.me) {
+    d = demoDefault();
+    window.DemoStore.save(d);
+  }
+  return d;
+}
+
+function demoSave(d) { window.DemoStore.save(d); }
+
+function initDemo() {
+  const d = demoData();
+  state.me = d.me;
+  state.conversations = d.conversations.map((c) => demoConvView(d, c));
+  state.contacts = { friends: d.friends, requests: d.requests };
+}
+
+async function demoApi(path, { method = 'GET', body } = {}) {
+  const d = demoData();
+  const me = d.me;
+  await new Promise((r) => setTimeout(r, 70));
+
+  if (path === '/me') {
+    if (method === 'PATCH' && body) {
+      if (body.nickname) me.nickname = body.nickname;
+      if (typeof body.signature === 'string') me.signature = body.signature;
+      demoSave(d);
+    }
+    return { user: me };
+  }
+
+  if (path === '/contacts') {
+    if (method === 'POST') return { ok: true };
+    return { friends: d.friends, requests: d.requests };
+  }
+
+  if (path === '/conversations') {
+    if (method === 'GET') {
+      return { conversations: d.conversations.map((c) => demoConvView(d, c)) };
+    }
+    if (body && body.type === 'direct') {
+      const peer = d.friends.find((f) => f.id === body.userId);
+      const exist = d.conversations.find((c) => c.type === 'direct' && c.peerId === body.userId);
+      if (exist) return { conversation: demoConvView(d, exist) };
+      const conv = {
+        id: ++d.nextConvId, type: 'direct', name: peer ? peer.nickname : '好友',
+        avatarHue: peer ? peer.avatarHue : 200, peerId: body.userId,
+        members: [me.id, body.userId], unread: 0, lastMessageAt: Date.now(),
+      };
+      d.conversations.unshift(conv);
+      d.messages[conv.id] = [];
+      demoSave(d);
+      return { conversation: demoConvView(d, conv) };
+    }
+    if (body && body.type === 'group') {
+      const ids = body.memberIds || [];
+      const conv = {
+        id: ++d.nextConvId, type: 'group',
+        name: body.name || ids.map((id) => {
+          const f = d.friends.find((x) => x.id === id);
+          return f ? f.nickname : '?';
+        }).join('、'),
+        avatarHue: (d.nextConvId * 47) % 360,
+        members: [me.id, ...ids], unread: 0, lastMessageAt: Date.now(),
+      };
+      d.conversations.unshift(conv);
+      d.messages[conv.id] = [{
+        id: ++d.nextMessageId, conversationId: conv.id, senderId: 0,
+        sender: null, type: 'system', content: '你创建了群聊', createdAt: Date.now(),
+      }];
+      demoSave(d);
+      return { conversation: demoConvView(d, conv) };
+    }
+  }
+
+  const mConv = path.match(/^\/conversations\/(\d+)$/);
+  if (mConv) {
+    const c = d.conversations.find((x) => x.id === Number(mConv[1]));
+    if (!c) throw new Error('会话不存在');
+    return { conversation: demoConvView(d, c) };
+  }
+
+  const mRead = path.match(/^\/conversations\/(\d+)\/read$/);
+  if (mRead) {
+    const c = d.conversations.find((x) => x.id === Number(mRead[1]));
+    if (c) c.unread = 0;
+    demoSave(d);
+    return { ok: true };
+  }
+
+  const mMessages = path.match(/^\/conversations\/(\d+)\/messages(?:\?.*)?$/);
+  if (mMessages) {
+    const cid = Number(mMessages[1]);
+    const c = d.conversations.find((x) => x.id === cid);
+    if (!c) throw new Error('会话不存在');
+    if (method === 'GET') return { messages: d.messages[cid] || [] };
+
+    if (body.type === 'image') throw new Error('演示模式暂不支持发送图片');
+    const msg = {
+      id: ++d.nextMessageId, conversationId: cid, senderId: me.id,
+      sender: { id: me.id, nickname: me.nickname, avatarHue: me.avatarHue },
+      type: 'text', content: String(body.content || '').slice(0, 2000),
+      createdAt: Date.now(),
+    };
+    (d.messages[cid] || (d.messages[cid] = [])).push(msg);
+    demoSave(d);
+
+    const sc = state.conversations.find((x) => x.id === cid);
+    if (sc) { sc.lastMessage = msg; sc.lastMessageAt = msg.createdAt; }
+
+    const peerId = c.type === 'direct'
+      ? c.peerId
+      : c.members.find((id) => id !== me.id);
+    const peer = d.friends.find((f) => f.id === peerId) || me;
+    showTyping();
+    setTimeout(() => {
+      const dd = demoData();
+      const replies = window.DemoSeed.replies;
+      const reply = {
+        id: ++dd.nextMessageId, conversationId: cid, senderId: peer.id,
+        sender: { id: peer.id, nickname: peer.nickname, avatarHue: peer.avatarHue },
+        type: 'text', content: replies[Math.floor(Math.random() * replies.length)],
+        createdAt: Date.now(),
+      };
+      (dd.messages[cid] || (dd.messages[cid] = [])).push(reply);
+      demoSave(dd);
+      handleWs({ type: 'message', message: reply });
+    }, 1400 + Math.random() * 1600);
+
+    return { message: msg };
+  }
+
+  if (path.startsWith('/users/search')) {
+    const q = new URLSearchParams(path.split('?')[1] || '').get('q') || '';
+    const users = d.friends
+      .filter((f) => f.nickname.includes(q) || f.username.includes(q))
+      .map((f) => ({ ...f, isFriend: true }));
+    return { users };
+  }
+
+  if (path === '/contacts/accept' || path === '/auth/logout') return { ok: true };
+  if (path === '/upload') throw new Error('演示模式暂不支持上传图片');
+
+  throw new Error('演示模式未实现：' + path);
+}
+
+function enterDemo() {
+  localStorage.removeItem('wt_token');
+  localStorage.setItem('wt_demo', '1');
+  location.hash = '#/chats';
+  location.reload();
+}
+
+function exitDemo() {
+  localStorage.removeItem('wt_demo');
+  localStorage.removeItem('wt_token');
+  location.hash = '#/login';
+  location.reload();
+}
+
+/* 朋友圈数据（演示模式） */
+function demoMoments() {
+  const d = demoData();
+  return { data: d, moments: d.moments || [] };
+}
+
+
 function clearAuth() {
   state.token = '';
+  state.demo = false;
   state.me = null;
   state.conversations = [];
   localStorage.removeItem('wt_token');
+  localStorage.removeItem('wt_demo');
   if (state.ws) { try { state.ws.close(); } catch {} state.ws = null; }
   location.hash = '#/login';
 }
@@ -274,6 +485,7 @@ const ICON = {
   back: '<path d="M15 18l-6-6 6-6"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   image: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/>',
+  camera: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
 };
 
 function svg(name, extra = '') {
@@ -299,7 +511,7 @@ function router() {
   const parts = raw.split('/').filter(Boolean);
   const head = parts[0] || 'chats';
 
-  if (!state.token) return renderLogin();
+  if (!state.token && !state.demo) return renderLogin();
 
   // 离开聊天页时清掉当前会话，避免影响 tab 视图与未读刷新
   if (head !== 'chat') state.chat.conv = null;
@@ -314,6 +526,7 @@ function router() {
   if (head === 'chats') return renderChats();
   if (head === 'contacts') return renderContacts();
   if (head === 'discover') return renderDiscover();
+  if (head === 'moments') return renderMoments();
   if (head === 'me') return renderMe();
   go('#/chats');
 }
@@ -352,6 +565,9 @@ function renderLogin() {
           ? '还没有账号？<button data-act="auth-mode" data-mode="register">注册</button>'
           : '已有账号？<button data-act="auth-mode" data-mode="login">登录</button>'}
       </div>
+      <button class="demo-entry" data-act="enter-demo">
+        不登录，先看看演示模式 →
+      </button>
       <div style="margin-top:16px;text-align:center;font-size:12px;color:var(--muted)">
         服务器：
         <button data-act="server-config" style="border:0;background:none;color:#576b95;font:inherit;cursor:pointer;padding:0 2px">
@@ -557,43 +773,170 @@ function renderNewGroup() {
 /* ---------------------------------------------------------------- 发现 */
 
 function renderDiscover() {
+  const items = [
+    ['moments', '朋友圈', '◉', '#f0a020'],
+    ['channels', '视频号', '▷', '#f0a020'],
+    ['live', '直播', '◈', '#fa5151'],
+    ['scan', '扫一扫', '▣', '#07c160'],
+    ['shake', '摇一摇', '↻', '#576b95'],
+    ['topics', '看一看', '⌕', '#576b95'],
+    ['search', '搜一搜', '⌕', '#576b95'],
+    ['nearby', '附近', '◎', '#576b95'],
+    ['shopping', '购物', '▤', '#fa5151'],
+    ['games', '游戏', '◈', '#07c160'],
+    ['mini', '小程序', '⊞', '#07c160'],
+  ];
+
   appEl.innerHTML = `
     <div class="nav"><h1>发现</h1></div>
     <div class="page">
-      <div class="list" style="margin-top:10px">
-        <button class="cell" data-act="soon"><span style="color:#f0a020">◉</span><span class="grow">朋友圈</span><span class="chev">›</span></button>
-        <button class="cell" data-act="soon"><span style="color:#07c160">▣</span><span class="grow">扫一扫</span><span class="chev">›</span></button>
-        <button class="cell" data-act="soon"><span style="color:#576b95">⌕</span><span class="grow">搜一搜</span><span class="chev">›</span></button>
+      <div class="list disc-list">
+        ${items.map(([act, label, glyph, color]) => `
+          <button class="cell" data-act="${act === 'moments' ? 'open-moments' : 'soon'}">
+            <span class="disc-icon" style="background:${color}">${glyph}</span>
+            <span class="grow">${label}</span>
+            <span class="chev">›</span>
+          </button>`).join('')}
       </div>
-      <div class="hint">这一版聚焦聊天本身。<br>朋友圈等功能留作后续扩展。</div>
     </div>
     ${tabbar('discover')}`;
   document.title = 'WeTalk';
+}
+
+/* ---------------------------------------------------------------- 朋友圈 */
+
+function renderMoments() {
+  const { data, moments } = demoMoments();
+  const me = data.me;
+  const users = data.friends;
+  const findUser = (id) => (id === me.id ? me : (users.find((u) => u.id === id) || { nickname: '?' }));
+  const sorted = [...moments].sort((a, b) => b.time - a.time);
+
+  appEl.innerHTML = `
+    <div class="nav solid">
+      <button class="side left" data-act="back">${svg('back', 'width="22" height="22"')}</button>
+      <h1>朋友圈</h1>
+      <button class="side right icon-btn" data-act="publish-moment" aria-label="发表">${svg('camera', 'width="22" height="22"')}</button>
+    </div>
+    <div class="page no-tab moments-page">
+      <div class="moments-cover">
+        <div class="cover-bg"></div>
+        <div class="cover-person">
+          ${avatarFor(me.nickname, me.avatarHue, 'lg')}
+          <div class="cover-name">${esc(me.nickname)}</div>
+        </div>
+      </div>
+      <div class="moments-list">
+        ${sorted.length ? sorted.map((m) => momentCard(m, findUser, me)).join('') : '<div class="empty">还没有动态</div>'}
+      </div>
+    </div>`;
+  document.title = '朋友圈';
+}
+
+function momentCard(m, findUser, me) {
+  const u = findUser(m.authorId);
+  const likes = (m.likes || []).map(findUser);
+  const comments = m.comments || [];
+  const liked = (m.likes || []).includes(me.id);
+
+  return `
+    <div class="moment">
+      ${avatarFor(u.nickname, u.avatarHue)}
+      <div class="moment-body">
+        <div class="moment-name">${esc(u.nickname)}</div>
+        ${m.text ? `<div class="moment-text">${esc(m.text)}</div>` : ''}
+        ${m.images && m.images.length ? `
+          <div class="moment-grid g${Math.min(m.images.length, 9)}">
+            ${m.images.map((h, i) => `<div class="mimg" style="--h:${h};--i:${i}"></div>`).join('')}
+          </div>` : ''}
+        <div class="moment-meta">
+          <span class="moment-time">${fmtListTime(m.time)}</span>
+          <button class="moment-act ${liked ? 'on' : ''}" data-act="like-moment" data-id="${m.id}">${liked ? '取消' : '赞'}</button>
+          <button class="moment-act" data-act="comment-moment" data-id="${m.id}">评论</button>
+        </div>
+        ${likes.length || comments.length ? `
+          <div class="moment-social">
+            ${likes.length ? `<div class="likes">♥ ${likes.map((x) => esc(x.nickname)).join('、')}</div>` : ''}
+            ${comments.map((c) => `<div class="comment"><b>${esc(findUser(c.userId).nickname)}</b>：${esc(c.text)}</div>`).join('')}
+          </div>` : ''}
+      </div>
+    </div>`;
+}
+
+function publishMoment() {
+  const text = prompt('这一刻的想法…');
+  if (text === null) return;
+  const t = text.trim();
+  if (!t) return;
+  const d = demoData();
+  d.moments = d.moments || [];
+  d.moments.unshift({
+    id: Date.now(), authorId: d.me.id, time: Date.now(),
+    text: t, images: [], likes: [], comments: [],
+  });
+  demoSave(d);
+  toast('已发表');
+  renderMoments();
+}
+
+function toggleLike(id) {
+  const d = demoData();
+  const m = (d.moments || []).find((x) => x.id === id);
+  if (!m) return;
+  m.likes = m.likes || [];
+  const idx = m.likes.indexOf(d.me.id);
+  if (idx >= 0) m.likes.splice(idx, 1);
+  else m.likes.push(d.me.id);
+  demoSave(d);
+  renderMoments();
+}
+
+function addComment(id) {
+  const text = prompt('评论：');
+  if (!text || !text.trim()) return;
+  const d = demoData();
+  const m = (d.moments || []).find((x) => x.id === id);
+  if (!m) return;
+  m.comments = m.comments || [];
+  m.comments.push({ userId: d.me.id, text: text.trim().slice(0, 200) });
+  demoSave(d);
+  renderMoments();
 }
 
 /* ---------------------------------------------------------------- 我 */
 
 function renderMe() {
   const u = state.me;
+  const demo = state.demo;
   appEl.innerHTML = `
     <div class="nav"><h1>我</h1></div>
     <div class="page">
       <div class="profile-head">
-        ${avatarFor(u.nickname, u.avatarHue)}
+        ${avatarFor(u.nickname, u.avatarHue, 'lg')}
         <div class="info">
           <div class="nick">${esc(u.nickname)}</div>
-          <div class="sub">@${esc(u.username)}</div>
+          <div class="sub">微信号：${esc(u.username)}</div>
           ${u.signature ? `<div class="sub">${esc(u.signature)}</div>` : ''}
         </div>
+        <span class="qr">▦</span>
       </div>
-      <div class="list" style="margin-top:10px">
-        <button class="cell" data-act="edit-profile"><span class="grow">编辑资料</span><span class="chev">›</span></button>
-        <button class="cell" data-act="logout"><span class="grow" style="color:var(--red)">退出登录</span></button>
+      <div class="list me-list">
+        <button class="cell" data-act="soon"><span class="grow">支付</span><span class="chev">›</span></button>
+        <button class="cell" data-act="open-moments"><span class="grow">朋友圈</span><span class="chev">›</span></button>
+        <button class="cell" data-act="soon"><span class="grow">收藏</span><span class="chev">›</span></button>
+        <button class="cell" data-act="soon"><span class="grow">卡包</span><span class="chev">›</span></button>
+        <button class="cell" data-act="soon"><span class="grow">表情</span><span class="chev">›</span></button>
       </div>
-      <div class="hint">WeTalk v1.0 · 自建即时通讯</div>
+      <div class="list me-list">
+        <button class="cell" data-act="edit-profile"><span class="grow">设置与资料</span><span class="chev">›</span></button>
+        ${demo
+          ? '<button class="cell" data-act="exit-demo"><span class="grow" style="color:var(--red)">退出演示模式</span></button>'
+          : '<button class="cell" data-act="logout"><span class="grow" style="color:var(--red)">退出登录</span></button>'}
+      </div>
+      <div class="hint">WeTalk v1.0${demo ? ' · 演示模式' : ' · 自建即时通讯'}</div>
     </div>
     ${tabbar('me')}`;
-  document.title = 'WeTalk';
+  document.title = '我';
 }
 
 /* ---------------------------------------------------------------- 聊天 */
@@ -711,10 +1054,10 @@ function messageNode(m) {
     who.textContent = m.sender ? m.sender.nickname : '';
     stack.appendChild(who);
     stack.appendChild(bubble);
-    wrap.appendChild(avatarFor(m.sender?.nickname, m.sender?.avatarHue));
+    wrap.appendChild(avatarNode(m.sender?.nickname, m.sender?.avatarHue));
     wrap.appendChild(stack);
   } else {
-    wrap.appendChild(avatarFor(mine ? state.me.nickname : (state.chat.conv?.name ?? '?'), mine ? state.me.avatarHue : state.chat.conv?.avatarHue));
+    wrap.appendChild(avatarNode(mine ? state.me.nickname : (state.chat.conv?.name ?? '?'), mine ? state.me.avatarHue : state.chat.conv?.avatarHue));
     wrap.appendChild(bubble);
   }
   return wrap;
@@ -910,6 +1253,30 @@ document.addEventListener('click', async (e) => {
       toast('这个功能留给后续版本');
       break;
 
+    case 'enter-demo':
+      enterDemo();
+      break;
+
+    case 'exit-demo':
+      exitDemo();
+      break;
+
+    case 'open-moments':
+      go('#/moments');
+      break;
+
+    case 'publish-moment':
+      publishMoment();
+      break;
+
+    case 'like-moment':
+      toggleLike(Number(el.dataset.id));
+      break;
+
+    case 'comment-moment':
+      addComment(Number(el.dataset.id));
+      break;
+
     case 'edit-profile':
       await openProfileSheet();
       break;
@@ -1029,6 +1396,13 @@ function openServerSheet() {
 /* ============================================================ 启动 */
 
 async function boot() {
+  if (state.demo) {
+    initDemo();
+    router();
+    window.addEventListener('hashchange', router);
+    return;
+  }
+
   if (state.token) {
     try {
       await loadMe();
@@ -1042,11 +1416,11 @@ async function boot() {
   window.addEventListener('hashchange', router);
 
   if (!isNativeShell && location.protocol.startsWith('http') && navigator.serviceWorker?.register) {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
   }
 
   if (isNativeShell && !serverBase) {
-    setTimeout(() => toast('请先在登录页配置后端服务器地址'), 500);
+    setTimeout(() => toast('没有服务器？登录页可进入演示模式'), 500);
   }
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && state.token) {

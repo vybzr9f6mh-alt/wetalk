@@ -1,6 +1,6 @@
 /* WeTalk service worker —— 只缓存静态外壳，接口与消息一律走网络 */
-const CACHE = 'wetalk-v1';
-const SHELL = ['/', '/index.html', '/style.css', '/app.js', '/manifest.webmanifest', '/icon-192.png'];
+const CACHE = 'wetalk-v2';
+const SHELL = ['./', './index.html', './style.css', './app.js', './demo.js', './manifest.webmanifest', './icon-192.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -21,7 +21,7 @@ self.addEventListener('fetch', (e) => {
 
   // 页面导航：优先网络，离线时回退到缓存的外壳
   if (e.request.mode === 'navigate') {
-    e.respondWith(fetch(e.request).catch(() => caches.match('/index.html')));
+    e.respondWith(fetch(e.request).catch(() => caches.match('./index.html')));
     return;
   }
 
