@@ -1,0 +1,125 @@
+name: 构建 WeTalk 安装包
+
+on:
+  workflow_dispatch:
+    inputs:
+      server_url:
+        description: "后端地址（如 https://wetalk.example.com），可留空，留空则首次运行在 App 内填写"
+        required: false
+        default: ""
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: 安装依赖
+        run: npm install --no-audit --no-fund
+
+      - name: 生成应用图标
+        run: python3 tools/gen_icons.py public
+
+      - name: 添加 Android 平台
+        run: npx cap add android
+
+      - name: 注入后端地址
+        env:
+          WETALK_SERVER_URL: ${{ inputs.server_url }}
+        run: node tools/set-server.mjs
+
+      - name: 同步 Web 资源
+        run: npx cap sync android
+
+      - name: 构建 APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: 上传 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: wetalk-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+  ios:
+    name: iOS IPA（未签名）
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: 准备 CocoaPods
+        run: pod --version || sudo gem install cocoapods
+
+      - name: 安装依赖
+        run: npm install --no-audit --no-fund
+
+      - name: 生成应用图标
+        run: python3 tools/gen_icons.py public
+
+      - name: 添加 iOS 平台
+        run: npx cap add ios
+
+      - name: 注入后端地址
+        env:
+          WETALK_SERVER_URL: ${{ inputs.server_url }}
+        run: node tools/set-server.mjs
+
+      - name: 同步 Web 资源
+        run: npx cap sync ios
+
+      - name: 编译（跳过签名）
+        run: |
+          cd ios/App
+          xcodebuild \
+            -workspace App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: 打包为 ipa
+        run: |
+          APP_PATH=$(find ios/App/build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -1)
+          echo "找到 App：$APP_PATH"
+          test -n "$APP_PATH"
+          rm -rf Payload WeTalk-unsigned.ipa
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          zip -qry WeTalk-unsigned.ipa Payload
+          ls -lh WeTalk-unsigned.ipa
+
+      - name: 上传 IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: wetalk-ipa-unsigned
+          path: WeTalk-unsigned.ipa
+          if-no-files-found: error
