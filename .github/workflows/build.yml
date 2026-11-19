@@ -1,18 +1,23 @@
 name: 构建 WeTalk 安装包
 
+# 用途：在 GitHub Actions 上产出 APK / IPA。
+# 用法：把本文件内容覆盖到 .github/workflows/build.yml（需要 GitHub 的 workflow 权限）。
+# 与旧版的区别：
+#   1. 不再使用 android-actions/setup-android（新版 runner 上它会卡在已废弃的 "tools" 包）；
+#   2. 构建产物直接发布到 Release，便于下载。
+
 on:
   workflow_dispatch:
     inputs:
       server_url:
-        description: "后端地址（如 https://wetalk.example.com），可留空，留空则首次运行在 App 内填写"
+        description: "后端地址，如 https://wetalk.example.com；留空则 App 内手动填写"
         required: false
         default: ""
   push:
     branches: [main]
-    tags: ["v*"]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   android:
@@ -30,15 +35,31 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - uses: android-actions/setup-android@v3
+      - name: 使用运行器预装的 Android SDK
+        run: |
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "platforms:"; ls "$SDK/platforms" 2>/dev/null || true
+          echo "build-tools:"; ls "$SDK/build-tools" 2>/dev/null || true
+
+      - name: 接受许可并补齐平台
+        run: |
+          SM=$(ls "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -1)
+          if [ -n "$SM" ]; then
+            yes | "$SM" --licenses >/dev/null 2>&1 || true
+            if [ -z "$(ls "$ANDROID_HOME/platforms" 2>/dev/null | grep -E 'android-3[4-9]')" ]; then
+              yes | "$SM" "platform-tools" "platforms;android-35" "build-tools;35.0.0" >/dev/null 2>&1 || true
+            fi
+          fi
 
       - name: 安装依赖
         run: npm install --no-audit --no-fund
 
-      - name: 生成应用图标
+      - name: 生成图标
         run: python3 tools/gen_icons.py public
 
-      - name: 添加 Android 平台
+      - name: 创建 Android 工程
         run: npx cap add android
 
       - name: 注入后端地址
@@ -49,18 +70,30 @@ jobs:
       - name: 同步 Web 资源
         run: npx cap sync android
 
-      - name: 构建 APK
+      - name: 编译 APK
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleDebug --no-daemon --stacktrace
+          cp app/build/outputs/apk/debug/app-debug.apk "../WeTalk-${{ github.run_number }}.apk"
+          ls -lh "../WeTalk-${{ github.run_number }}.apk"
 
-      - name: 上传 APK
+      - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
           name: wetalk-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: WeTalk-*.apk
           if-no-files-found: error
+
+      - name: 发布到 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-${{ github.run_number }}
+          name: WeTalk Android 构建 ${{ github.run_number }}
+          body: |
+            Android 调试签名包，可直接侧载安装（需允许「安装未知来源应用」）。
+          files: WeTalk-*.apk
+          fail_on_unmatched_files: true
 
   ios:
     name: iOS IPA（未签名）
@@ -72,16 +105,26 @@ jobs:
         with:
           node-version: "22"
 
-      - name: 准备 CocoaPods
-        run: pod --version || sudo gem install cocoapods
+      - name: 环境诊断
+        run: |
+          node -v
+          xcodebuild -version
+          pod --version 2>/dev/null || echo "CocoaPods 未安装"
+
+      - name: 安装 CocoaPods
+        run: |
+          if ! command -v pod >/dev/null 2>&1; then
+            sudo gem install cocoapods --no-document
+          fi
+          pod --version
 
       - name: 安装依赖
         run: npm install --no-audit --no-fund
 
-      - name: 生成应用图标
+      - name: 生成图标
         run: python3 tools/gen_icons.py public
 
-      - name: 添加 iOS 平台
+      - name: 创建 iOS 工程
         run: npx cap add ios
 
       - name: 注入后端地址
@@ -92,14 +135,14 @@ jobs:
       - name: 同步 Web 资源
         run: npx cap sync ios
 
-      - name: 编译（跳过签名）
+      - name: 编译（不签名）
         run: |
           cd ios/App
           xcodebuild \
             -workspace App.xcworkspace \
             -scheme App \
             -configuration Release \
-            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
@@ -111,15 +154,26 @@ jobs:
           APP_PATH=$(find ios/App/build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -1)
           echo "找到 App：$APP_PATH"
           test -n "$APP_PATH"
-          rm -rf Payload WeTalk-unsigned.ipa
+          rm -rf Payload "WeTalk-${{ github.run_number }}-unsigned.ipa"
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
-          zip -qry WeTalk-unsigned.ipa Payload
-          ls -lh WeTalk-unsigned.ipa
+          zip -qry "WeTalk-${{ github.run_number }}-unsigned.ipa" Payload
+          ls -lh WeTalk-*.ipa
 
-      - name: 上传 IPA
+      - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
           name: wetalk-ipa-unsigned
-          path: WeTalk-unsigned.ipa
+          path: WeTalk-*.ipa
           if-no-files-found: error
+
+      - name: 发布到 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ios-${{ github.run_number }}
+          name: WeTalk iOS 构建 ${{ github.run_number }}
+          body: |
+            未签名 IPA。iOS 只安装 Apple 签名的应用，需用自己的 Apple ID 重签
+            （Sideloadly / AltStore / Xcode，免费账号 7 天有效）。
+          files: WeTalk-*.ipa
+          fail_on_unmatched_files: true
